@@ -31,11 +31,19 @@ struct ContentView: View {
             Text("Status: \(chrome.statusText)")
               .font(.caption)
               .foregroundStyle(.secondary)
-            Button(chrome.isRunning ? "Chrome Running" : "Start Browser") {
-              Task { await chrome.start() }
+            HStack(spacing: 8) {
+              Button(chrome.isRunning ? "Chrome Running" : "Start Browser") {
+                Task { await chrome.start() }
+              }
+              .buttonStyle(.borderedProminent)
+              .disabled(chrome.isRunning)
+
+              Button("Stop Browser") {
+                chrome.stop()
+              }
+              .buttonStyle(.bordered)
+              .disabled(!chrome.isRunning)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(chrome.isRunning)
           }
           .padding(.vertical, 4)
         }
@@ -47,6 +55,9 @@ struct ContentView: View {
             Label("Add Item", systemImage: "plus")
           }
         }
+      }
+      .task {
+        await chrome.refreshRunningStatus()
       }
     } detail: {
       Text("Select an item")
