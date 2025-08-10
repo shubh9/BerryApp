@@ -1,0 +1,10 @@
+# Xcode user-specific data (local schemes, UI state)
+**/xcuserdata/
+**/*.xcuserstate
+
+# Ignore the local, unshared scheme you created
+Berry.xcodeproj/xcuserdata/shubhmittal.xcuserdatad/xcschemes/Berry (local).xcscheme
+
+# macOS noise
+.DS_Store
+
