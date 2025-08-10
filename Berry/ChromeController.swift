@@ -24,10 +24,10 @@ final class ChromeController: ObservableObject {
   private var launchedProcess: Process?
   private var stdoutPipe: Pipe?
   private var stderrPipe: Pipe?
-  //   private let initialOperatorPrompt: String =
-  //     "open gmail and open my first email in my promotions folders"
   private let initialOperatorPrompt: String =
-    "open air canada's website and find the cheapest flight to toronto from sf"
+    "open gmail and open my first email in my promotions folders"
+  //   private let initialOperatorPrompt: String =
+  //     "open air canada's website and find the cheapest flight to toronto from sf"
   // Expose port for downstream clients
   var remoteDebuggingPort: Int { debuggingPort }
 
@@ -42,34 +42,51 @@ final class ChromeController: ObservableObject {
       "--profile-directory=Default",
       "--no-first-run",
       "--no-default-browser-check",
-      "about:blank",
+      "https://www.google.com/",
     ]
   }
 
   func start() async {
-    // If a Chrome instance is already running on our devtools port, attach instead of launching
-    if await isDevToolsUp() {
-
-      isRunning = true
-      statusText = "Chrome already running; starting operator…"
-      startOperator(prompt: initialOperatorPrompt)
-      return
+    if await !isDevToolsUp() {
+      statusText = "Launching Chrome…"
+      print("Launching Chrome")
+      let ok = await launchChrome()
+      if ok {
+        isRunning = true
+        statusText = "Chrome launched; starting operator…"
+      } else {
+        isRunning = false
+        statusText = "Failed to launch Chrome"
+        return
+      }
     }
-    print("Launching Chrome")
-
-    statusText = "Launching Chrome…"
-    let ok = await launchChrome()
-    if ok {
-      isRunning = true
-      statusText = "Chrome launched; starting operator…"
-
-      // Start the operator automatically with the requested prompt
-      startOperator(prompt: initialOperatorPrompt)
-    } else {
-      isRunning = false
-      statusText = "Failed to launch Chrome"
-    }
+    startOperator(prompt: initialOperatorPrompt)
   }
+
+  //   func start() async {
+  //     // If a Chrome instance is already running on our devtools port, attach instead of launching
+  //     if await isDevToolsUp() {
+
+  //       isRunning = true
+  //       statusText = "Chrome already running; starting operator…"
+  //       startOperator(prompt: initialOperatorPrompt)
+  //       return
+  //     }
+  //     print("Launching Chrome")
+
+  //     statusText = "Launching Chrome…"
+  //     let ok = await launchChrome()
+  //     if ok {
+  //       isRunning = true
+  //       statusText = "Chrome launched; starting operator…"
+
+  //       // Start the operator automatically with the requested prompt
+  //       startOperator(prompt: initialOperatorPrompt)
+  //     } else {
+  //       isRunning = false
+  //       statusText = "Failed to launch Chrome"
+  //     }
+  //   }
 
   private func startOperator(prompt: String) {
     let service = OperatorService(debugPort: debuggingPort)
@@ -229,6 +246,8 @@ actor CDPClient {
   private var receiveLoopTask: Task<Void, Never>?
   private var nextMessageId: Int = 1
   private var pendingContinuations: [Int: CheckedContinuation<[String: Any], Error>] = [:]
+  // Track method names and send timestamps for minimal response logging
+  private var pendingMeta: [Int: (method: String, sentAt: Date)] = [:]
 
   init(debugPort: Int) { self.debugPort = debugPort }
 
@@ -290,6 +309,19 @@ actor CDPClient {
       return
     }
     if let id = obj["id"] as? Int, let cont = pendingContinuations.removeValue(forKey: id) {
+      // Minimal response log with method name and latency
+      let meta = pendingMeta.removeValue(forKey: id)
+      let method = meta?.method ?? "?"
+      let elapsedMs: String = {
+        guard let t0 = meta?.sentAt else { return "-" }
+        let ms = Date().timeIntervalSince(t0) * 1000.0
+        return String(format: "%.1f", ms)
+      }()
+      if let err = obj["error"] {
+        NSLog("[CDP] <- recv id=\(id) method=\(method) ERROR=\(err)")
+      } else {
+        NSLog("[CDP] <- recv id=\(id) method=\(method) in \(elapsedMs)ms")
+      }
       cont.resume(returning: obj)
     }
   }
@@ -308,6 +340,7 @@ actor CDPClient {
     return try await withCheckedThrowingContinuation {
       (cont: CheckedContinuation<[String: Any], Error>) in
       pendingContinuations[id] = cont
+      pendingMeta[id] = (method: method, sentAt: Date())
       ws.send(.string(text)) { [weak self] err in
         guard let self, let err = err else { return }
         // Hop back to the actor to mutate state safely
@@ -348,7 +381,7 @@ actor CDPClient {
     }
 
     // Try to create a new tab once
-    let newURL = URL(string: "http://127.0.0.1:\(debugPort)/json/new?about:blank")!
+    let newURL = URL(string: "http://127.0.0.1:\(debugPort)/json/new?https://www.google.com/")!
     if let (newData, _) = try? await URLSession.shared.data(from: newURL) {
       struct NewTarget: Decodable { let webSocketDebuggerUrl: String }
       if let created = try? JSONDecoder().decode(NewTarget.self, from: newData) {
@@ -389,7 +422,8 @@ actor CDPClient {
         return true;
       })();
       """
-    _ = try await evaluate(js)
+    let ok = (try await evaluate(js) as? Bool) ?? false
+    NSLog("[CDP] click(selector: \(selector)) result=\(ok)")
   }
 
   func type(selector: String, text: String) async throws {
@@ -407,7 +441,8 @@ actor CDPClient {
         return false;
       })();
       """
-    _ = try await evaluate(js)
+    let ok = (try await evaluate(js) as? Bool) ?? false
+    NSLog("[CDP] type(selector: \(selector), textLen: \(text.count)) result=\(ok)")
   }
 
   func waitForSelector(_ selector: String, timeoutMs: Int = 10_000, intervalMs: Int = 200)
@@ -426,7 +461,14 @@ actor CDPClient {
   }
 
   func screenshot() async throws -> Data {
-    let res = try await send(method: "Page.captureScreenshot", params: ["format": "png"])
+    // Use JPEG with moderate quality to keep message size under ~1MB limit of URLSessionWebSocketTask
+    let res = try await send(
+      method: "Page.captureScreenshot",
+      params: [
+        "format": "jpeg",
+        "quality": 60,  // adjust if needed to stay under message limit
+        "optimizeForSpeed": true,
+      ])
     guard let result = res["result"] as? [String: Any],
       let b64 = result["data"] as? String,
       let data = Data(base64Encoded: b64)
@@ -434,6 +476,229 @@ actor CDPClient {
       throw CDPError(message: "No screenshot data")
     }
     return data
+  }
+
+  // Best-effort viewport metrics (CSS pixels and device pixel ratio)
+  func viewportSize() async throws -> (width: Int, height: Int, dpr: Double) {
+    let wAny = try await evaluate("window.innerWidth")
+    let hAny = try await evaluate("window.innerHeight")
+    let dprAny = try await evaluate("window.devicePixelRatio")
+
+    let width: Int = {
+      if let i = wAny as? Int { return i }
+      if let d = wAny as? Double { return Int(d.rounded()) }
+      return 0
+    }()
+    let height: Int = {
+      if let i = hAny as? Int { return i }
+      if let d = hAny as? Double { return Int(d.rounded()) }
+      return 0
+    }()
+    let dpr: Double = {
+      if let d = dprAny as? Double { return d }
+      if let i = dprAny as? Int { return Double(i) }
+      return 1.0
+    }()
+    return (max(0, width), max(0, height), max(0.5, dpr))
+  }
+
+  // Best-effort read of the current URL from the page via document.location.href
+  func currentURL() async throws -> String? {
+    let expr = "document.location.href"
+    if let value = try await evaluate(expr) as? String {
+      return value
+    }
+    return nil
+  }
+
+  // MARK: Input: mouse
+  func moveMouse(x: Int, y: Int) async throws {
+    _ = try await send(
+      method: "Input.dispatchMouseEvent",
+      params: [
+        "type": "mouseMoved",
+        "x": x,
+        "y": y,
+        "buttons": 0,
+      ])
+  }
+
+  func clickAt(x: Int, y: Int, button: String = "left") async throws {
+    let btn = canonicalMouseButton(button)
+    // Move first
+    try await moveMouse(x: x, y: y)
+    // Press
+    _ = try await send(
+      method: "Input.dispatchMouseEvent",
+      params: [
+        "type": "mousePressed",
+        "x": x,
+        "y": y,
+        "button": btn,
+        "clickCount": 1,
+      ])
+    // Release
+    _ = try await send(
+      method: "Input.dispatchMouseEvent",
+      params: [
+        "type": "mouseReleased",
+        "x": x,
+        "y": y,
+        "button": btn,
+        "clickCount": 1,
+      ])
+  }
+
+  func doubleClickAt(x: Int, y: Int) async throws {
+    try await clickAt(x: x, y: y, button: "left")
+    // Short delay between clicks
+    try? await Task.sleep(nanoseconds: 80_000_000)
+    try await clickAt(x: x, y: y, button: "left")
+  }
+
+  func drag(path: [[String: Int]]) async throws {
+    guard let first = path.first, let last = path.last else { return }
+    let startX = first["x"] ?? 0
+    let startY = first["y"] ?? 0
+    // Move and press
+    try await moveMouse(x: startX, y: startY)
+    _ = try await send(
+      method: "Input.dispatchMouseEvent",
+      params: [
+        "type": "mousePressed",
+        "x": startX,
+        "y": startY,
+        "button": "left",
+        "clickCount": 1,
+      ])
+    // Move along path (skip first)
+    for point in path.dropFirst() {
+      let x = point["x"] ?? last["x"] ?? startX
+      let y = point["y"] ?? last["y"] ?? startY
+      _ = try await send(
+        method: "Input.dispatchMouseEvent",
+        params: [
+          "type": "mouseMoved",
+          "x": x,
+          "y": y,
+          "buttons": 1,
+        ])
+    }
+    // Release at last
+    let endX = last["x"] ?? startX
+    let endY = last["y"] ?? startY
+    _ = try await send(
+      method: "Input.dispatchMouseEvent",
+      params: [
+        "type": "mouseReleased",
+        "x": endX,
+        "y": endY,
+        "button": "left",
+        "clickCount": 1,
+      ])
+  }
+
+  func scrollBy(scrollX: Int, scrollY: Int, atX x: Int, atY y: Int) async throws {
+    _ = try await send(
+      method: "Input.dispatchMouseEvent",
+      params: [
+        "type": "mouseWheel",
+        "x": x,
+        "y": y,
+        "deltaX": scrollX,
+        "deltaY": scrollY,
+      ])
+  }
+
+  private func canonicalMouseButton(_ name: String) -> String {
+    let lower = name.lowercased()
+    switch lower {
+    case "left", "primary": return "left"
+    case "right", "secondary": return "right"
+    case "middle": return "middle"
+    default: return "left"
+    }
+  }
+
+  // MARK: Input: keyboard
+  func typeText(_ text: String) async throws {
+    // InsertText types the given text into the focused element
+    _ = try await send(method: "Input.insertText", params: ["text": text])
+  }
+
+  func keypress(keys: [String]) async throws {
+    guard !keys.isEmpty else { return }
+    let mainKey = keys.last!
+    let modifiers = modifierMask(from: keys.dropLast())
+    let paramsDown: [String: Any] = [
+      "type": "rawKeyDown",
+      "key": mainKey,
+      "windowsVirtualKeyCode": windowsVK(mainKey),
+      "modifiers": modifiers,
+      "text": textForKey(mainKey),
+    ]
+    _ = try await send(method: "Input.dispatchKeyEvent", params: paramsDown)
+    let paramsUp: [String: Any] = [
+      "type": "keyUp",
+      "key": mainKey,
+      "windowsVirtualKeyCode": windowsVK(mainKey),
+      "modifiers": modifiers,
+    ]
+    _ = try await send(method: "Input.dispatchKeyEvent", params: paramsUp)
+  }
+
+  private func modifierMask<S: Sequence>(from mods: S) -> Int where S.Element == String {
+    var mask = 0
+    for m in mods.map({ $0.lowercased() }) {
+      switch m {
+      case "alt", "option": mask |= 1
+      case "control", "ctrl": mask |= 2
+      case "shift": mask |= 4
+      case "meta", "command", "cmd", "super": mask |= 8
+      default: break
+      }
+    }
+    return mask
+  }
+
+  private func windowsVK(_ key: String) -> Int {
+    // Minimal mapping; letters/numbers fallback using ASCII
+    let lower = key.lowercased()
+    switch lower {
+    case "enter", "return": return 13
+    case "tab": return 9
+    case "escape", "esc": return 27
+    case "backspace": return 8
+    case "delete": return 46
+    case "arrowleft", "left": return 37
+    case "arrowup", "up": return 38
+    case "arrowright", "right": return 39
+    case "arrowdown", "down": return 40
+    default:
+      if let scalar = key.unicodeScalars.first {
+        return Int(scalar.value)
+      }
+      return 0
+    }
+  }
+
+  private func textForKey(_ key: String) -> String {
+    // Provide printable character if appropriate
+    if key.count == 1 { return key }
+    switch key.lowercased() {
+    case "enter", "return": return "\n"
+    case "tab": return "\t"
+    default: return ""
+    }
+  }
+
+  // MARK: History
+  func back() async throws {
+    _ = try await evaluate("history.back(); undefined")
+  }
+
+  func forward() async throws {
+    _ = try await evaluate("history.forward(); undefined")
   }
 
   private func jsonString(_ s: String) -> String {

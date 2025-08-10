@@ -19,6 +19,7 @@ final class OperatorService: ObservableObject {
 
   private let cdp: CDPClient
   private var streamTask: Task<Void, Never>?
+  private var currentDevicePixelRatio: Double = 1.0
 
   init(debugPort: Int) {
     self.cdp = CDPClient(debugPort: debugPort)
@@ -99,10 +100,34 @@ final class OperatorService: ObservableObject {
       request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
       request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
+      // Query the current viewport from the active page so the tool has accurate dimensions.
+      guard let size = try? await self.cdp.viewportSize(), size.width > 0, size.height > 0 else {
+        throw NSError(
+          domain: "OperatorService", code: 3,
+          userInfo: [NSLocalizedDescriptionKey: "Failed to determine viewport size (width/height)"])
+      }
+      let cssWidth = size.width
+      let cssHeight = size.height
+      NSLog("[Operator] viewport size: \(cssWidth)x\(cssHeight)")
+      let dpr = size.dpr
+      currentDevicePixelRatio = max(0.5, dpr)
+      // The screenshot is in device pixels. Provide display dimensions in device pixels
+      // so the model's coordinates match the image pixels we send back.
+      let displayWidth = Int(Double(cssWidth) * currentDevicePixelRatio)
+      let displayHeight = Int(Double(cssHeight) * currentDevicePixelRatio)
+
       let body: [String: Any] = [
         "model": "computer-use-preview",
         "input": conversationItems,
-        "tools": toolSchemas(),
+        // Only expose the native computer tool; rely solely on computer_call
+        "tools": [
+          [
+            "type": "computer-preview",
+            "display_width": displayWidth,
+            "display_height": displayHeight,
+            "environment": "browser",
+          ]
+        ],
         "truncation": "auto",
       ]
       request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -126,52 +151,77 @@ final class OperatorService: ObservableObject {
 
       var handledAnyTool = false
 
+      // Add everything the model returned
+      conversationItems.append(contentsOf: output)
+
       for item in output {
         guard let type = item["type"] as? String else { continue }
-        if type == "tool_call" || type == "function_call" || type == "computer_call" {
+        if type == "computer_call" {
           handledAnyTool = true
 
-          // Use the tool call's id as the call_id for outputs; fall back to call_id then UUID
-          let callId = (item["id"] as? String) ?? (item["call_id"] as? String) ?? UUID().uuidString
+          //   for (key, value) in item {
+          //     NSLog("[Operator] item param: \(key) = \(value)")
+          //   }
 
-          // Persist the original tool call in conversation so the API can match outputs to calls
-          // Keep it intact (do not replace its id); just append as-is so the server recognizes it
-          conversationItems.append(item)
-
-          let name = (item["name"] as? String) ?? ""
-
-          let argsAny = item["arguments"]
-          let argsDict: [String: Any]
-          if let s = argsAny as? String,
-            let dict = try? JSONSerialization.jsonObject(with: Data(s.utf8)) as? [String: Any]
-          {
-            argsDict = dict
-          } else {
-            argsDict = (argsAny as? [String: Any]) ?? [:]
+          // Use the tool call's id as the call_id for outputs
+          guard let callId = item["call_id"] as? String else {
+            NSLog("[Operator] missing tool-call id; skipping")
+            continue
           }
 
-          NSLog("[Operator] \(type) name=\(name) call_id=\(callId) args=\(argsDict)")
+          let pendingChecks = (item["pending_safety_checks"] as? [[String: Any]]) ?? []
+          // Execute the computer action, then return an input_image
+          do {
+            let actionDict: [String: Any]
+            if let a = item["action"] as? [String: Any] {
+              actionDict = a
+            } else if let aString = item["action"] as? String,
+              let dict = try? JSONSerialization.jsonObject(with: Data(aString.utf8))
+                as? [String: Any]
+            {
+              actionDict = dict
+            } else {
+              actionDict = [:]
+            }
 
-          let (toolOutputString, screenshotBase64) = await self.executeToolLocally(
-            name: name, args: argsDict)
+            let actionType = (actionDict["type"] as? String) ?? ""
+            NSLog("[Operator] executing action type=\(actionType)")
+            let t0 = Date()
+            try await self.handleComputerAction(action: actionDict)
+            let ms = Date().timeIntervalSince(t0) * 1000.0
+            NSLog(
+              "[Operator] action type=\(actionType) completed in \(String(format: "%.1f", ms))ms")
 
-          // Append appropriate *_call_output based on call type
-          let outputType =
-            (type == "computer_call") ? "computer_call_output" : "function_call_output"
-          conversationItems.append([
-            "type": outputType,
-            "call_id": callId,
-            "output": toolOutputString,
-          ])
-          NSLog("[Operator] appended \(outputType) for call_id=\(callId)")
+            let screenshotData = try await cdp.screenshot()
+            let b64 = screenshotData.base64EncodedString()
+            let currentUrl = try? await cdp.currentURL()
 
-          // If screenshot present, add as input_image via data URL
-          if let b64 = screenshotBase64 {
             conversationItems.append([
-              "type": "input_image",
-              "image_url": "data:image/png;base64,\(b64)",
+              "type": "computer_call_output",
+              "call_id": callId,
+              "acknowledged_safety_checks": pendingChecks,
+              "output": [
+                "type": "input_image",
+                "image_url": "data:image/jpeg;base64,\(b64)",
+                "current_url": (currentUrl as Any?) ?? NSNull(),
+              ],
             ])
-            NSLog("[Operator] appended input_image (screenshot)")
+            NSLog("[Operator] executed computer action and appended image for call_id=\(callId)")
+          } catch {
+            conversationItems.append([
+              "type": "computer_call_output",
+              "call_id": callId,
+              "acknowledged_safety_checks": pendingChecks,
+              "output": [
+                "type": "input_image",
+                "image_url": NSNull(),
+                "current_url": NSNull(),
+                "error": "action_failed: \(error)",
+              ],
+            ])
+            NSLog(
+              "[Operator] action failed; appended error image payload for call_id=\(callId) error=\(error)"
+            )
           }
         }
       }
@@ -190,111 +240,90 @@ final class OperatorService: ObservableObject {
     }
   }
 
-  private func toolSchemas() -> [[String: Any]] {
-    return [
-      [
-        "type": "function",
-        "name": "navigate",
-        "description": "Navigate the browser to a URL",
-        "parameters": [
-          "type": "object",
-          "properties": ["url": ["type": "string"]],
-          "required": ["url"],
-        ],
-      ],
-      [
-        "type": "function",
-        "name": "click",
-        "description": "Click an element by CSS selector",
-        "parameters": [
-          "type": "object",
-          "properties": ["selector": ["type": "string"]],
-          "required": ["selector"],
-        ],
-      ],
-      [
-        "type": "function",
-        "name": "type",
-        "description": "Type text into an element by CSS selector",
-        "parameters": [
-          "type": "object",
-          "properties": [
-            "selector": ["type": "string"],
-            "text": ["type": "string"],
-          ],
-          "required": ["selector", "text"],
-        ],
-      ],
-      [
-        "type": "function",
-        "name": "evaluate",
-        "description": "Run JavaScript in the page context",
-        "parameters": [
-          "type": "object",
-          "properties": ["expression": ["type": "string"]],
-          "required": ["expression"],
-        ],
-      ],
-      [
-        "type": "function",
-        "name": "screenshot",
-        "description": "Capture a screenshot of the current page",
-        "parameters": ["type": "object", "properties": [:]],
-      ],
-    ]
-  }
+  // No-op; we now inline the computer tool in the request body
+  private func toolSchemas() -> [[String: Any]] { return [] }
 
-  // Execute a tool locally and return a JSON string output + optional screenshot base64
-  private func executeToolLocally(name: String, args: [String: Any]) async -> (String, String?) {
-    func stringify(_ obj: Any) -> String {
-      if let data = try? JSONSerialization.data(withJSONObject: obj),
-        let text = String(data: data, encoding: .utf8)
-      {
-        return text
-      }
-      return "{}"
+  // Execute a single computer action using our CDP client
+  private func handleComputerAction(action: [String: Any]) async throws {
+    let actionType = (action["type"] as? String) ?? ""
+    var args = action
+    args.removeValue(forKey: "type")
+
+    await MainActor.run { self.setStatus("Executing: \(actionType)") }
+    NSLog("[Operator] start action type=\(actionType) args=\(args)")
+
+    // Helper to convert from model coords (device pixels) to CSS pixels for CDP
+    func toCss(_ v: Int) -> Int {
+      return Int((Double(v) / max(0.5, currentDevicePixelRatio)).rounded())
     }
 
-    do {
-      switch name {
-      case "navigate":
-        if let url = args["url"] as? String {
-          try await cdp.navigate(to: url)
-          await MainActor.run { self.setStatus("Navigated to \(url)") }
-          return (stringify(["ok": true, "action": name, "url": url]), nil)
-        }
-      case "click":
-        if let sel = args["selector"] as? String {
-          try await cdp.click(selector: sel)
-          await MainActor.run { self.setStatus("Clicked \(sel)") }
-          return (stringify(["ok": true, "action": name, "selector": sel]), nil)
-        }
-      case "type":
-        if let sel = args["selector"] as? String, let text = args["text"] as? String {
-          try await cdp.type(selector: sel, text: text)
-          await MainActor.run { self.setStatus("Typed into \(sel)") }
-          return (stringify(["ok": true, "action": name, "selector": sel]), nil)
-        }
-      case "evaluate":
-        if let expr = args["expression"] as? String {
-          let value = try await cdp.evaluate(expr)
-          await MainActor.run { self.setStatus("Evaluated expression") }
-          return (stringify(["ok": true, "action": name, "value": value ?? NSNull()]), nil)
-        }
-      case "screenshot":
-        let data = try await cdp.screenshot()
-        let b64 = data.base64EncodedString()
-        await MainActor.run { self.setStatus("Captured screenshot") }
-        return (stringify(["ok": true, "action": name]), b64)
-      default:
-        break
-      }
-    } catch {
-      await MainActor.run { self.setStatus("Tool error: \(error)") }
-      return (stringify(["ok": false, "error": "\(error)"]), nil)
-    }
+    switch actionType {
+    case "click":
+      let x = toCss(args["x"] as? Int ?? 0)
+      let y = toCss(args["y"] as? Int ?? 0)
+      let button = (args["button"] as? String) ?? "left"
+      try await cdp.clickAt(x: x, y: y, button: button)
 
-    return (stringify(["ok": false, "error": "invalid_arguments"]), nil)
+    case "double_click":
+      let x = toCss(args["x"] as? Int ?? 0)
+      let y = toCss(args["y"] as? Int ?? 0)
+      try await cdp.doubleClickAt(x: x, y: y)
+
+    case "scroll":
+      let x = toCss(args["x"] as? Int ?? 0)
+      let y = toCss(args["y"] as? Int ?? 0)
+      let scrollX = toCss(args["scroll_x"] as? Int ?? 0)
+      let scrollY = toCss(args["scroll_y"] as? Int ?? 0)
+      try await cdp.scrollBy(scrollX: scrollX, scrollY: scrollY, atX: x, atY: y)
+
+    case "type":
+      let text = args["text"] as? String ?? ""
+      try await cdp.typeText(text)
+
+    case "wait":
+      let ms = args["ms"] as? Int ?? 1000
+      NSLog("[Operator] wait for \(ms)ms")
+      try await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
+
+    case "move":
+      let x = toCss(args["x"] as? Int ?? 0)
+      let y = toCss(args["y"] as? Int ?? 0)
+      try await cdp.moveMouse(x: x, y: y)
+
+    case "keypress":
+      let keys = args["keys"] as? [String] ?? []
+      try await cdp.keypress(keys: keys)
+
+    case "drag":
+      let rawPath = args["path"] as? [[String: Int]] ?? []
+      let path: [[String: Int]] = rawPath.map { point in
+        var out = point
+        if let px = point["x"] { out["x"] = toCss(px) }
+        if let py = point["y"] { out["y"] = toCss(py) }
+        return out
+      }
+      try await cdp.drag(path: path)
+
+    case "goto":
+      if let url = args["url"] as? String { try await cdp.navigate(to: url) }
+
+    case "back":
+      try await cdp.back()
+
+    case "forward":
+      try await cdp.forward()
+
+    case "screenshot":
+      NSLog("[Operator] screenshot action; no-op")
+      // No-op: we always capture a screenshot after executing the action
+      return
+
+    default:
+      throw NSError(
+        domain: "OperatorService", code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "Unsupported action: \(actionType)"])
+    }
+    NSLog("[Operator] end action type=\(actionType)")
   }
 
   private func extractAssistantText(from output: [[String: Any]]) -> String? {
