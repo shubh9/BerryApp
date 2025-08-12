@@ -25,7 +25,7 @@ final class ChromeController: ObservableObject {
   private var stdoutPipe: Pipe?
   private var stderrPipe: Pipe?
   private let initialOperatorPrompt: String =
-    "open gmail and open my first email in my promotions folders"
+    "open gmail and open my first email in my promotions folders."
   //   private let initialOperatorPrompt: String =
   //     "open air canada's website and find the cheapest flight to toronto from sf"
   // Expose port for downstream clients
@@ -630,14 +630,27 @@ actor CDPClient {
     guard !keys.isEmpty else { return }
     let mainKey = keys.last!
     let modifiers = modifierMask(from: keys.dropLast())
+
+    // Try to ensure the browser window has focus for system shortcuts
+    if modifiers != 0 {
+      try? await bringBrowserToFront()
+    }
+
+    // For modifier combinations, don't include text to avoid conflicts
+    let includeText = modifiers == 0
+
     let paramsDown: [String: Any] = [
       "type": "rawKeyDown",
       "key": mainKey,
       "windowsVirtualKeyCode": windowsVK(mainKey),
       "modifiers": modifiers,
-      "text": textForKey(mainKey),
+      "text": includeText ? textForKey(mainKey) : "",
     ]
     _ = try await send(method: "Input.dispatchKeyEvent", params: paramsDown)
+
+    // Add small delay between keyDown and keyUp for better compatibility
+    try? await Task.sleep(nanoseconds: 10_000_000)  // 10ms
+
     let paramsUp: [String: Any] = [
       "type": "keyUp",
       "key": mainKey,
@@ -645,6 +658,14 @@ actor CDPClient {
       "modifiers": modifiers,
     ]
     _ = try await send(method: "Input.dispatchKeyEvent", params: paramsUp)
+  }
+
+  private func bringBrowserToFront() async throws {
+    // Try to bring the browser window to front using JavaScript focus
+    _ = try? await evaluate("window.focus(); undefined")
+
+    // Small delay to allow focus to take effect
+    try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
   }
 
   private func modifierMask<S: Sequence>(from mods: S) -> Int where S.Element == String {
@@ -699,6 +720,12 @@ actor CDPClient {
 
   func forward() async throws {
     _ = try await evaluate("history.forward(); undefined")
+  }
+
+  // MARK: Tab management
+  func openNewTab(url: String = "about:blank") async throws {
+    // Use JavaScript to open a new tab - more reliable than Ctrl+T
+    _ = try await evaluate("window.open('\(url)', '_blank'); undefined")
   }
 
   private func jsonString(_ s: String) -> String {

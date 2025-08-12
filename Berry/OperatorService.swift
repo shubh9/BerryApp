@@ -108,7 +108,6 @@ final class OperatorService: ObservableObject {
       }
       let cssWidth = size.width
       let cssHeight = size.height
-      NSLog("[Operator] viewport size: \(cssWidth)x\(cssHeight)")
       let dpr = size.dpr
       currentDevicePixelRatio = max(0.5, dpr)
       // The screenshot is in device pixels. Provide display dimensions in device pixels
@@ -186,12 +185,7 @@ final class OperatorService: ObservableObject {
 
             let actionType = (actionDict["type"] as? String) ?? ""
             NSLog("[Operator] executing action type=\(actionType)")
-            let t0 = Date()
             try await self.handleComputerAction(action: actionDict)
-            let ms = Date().timeIntervalSince(t0) * 1000.0
-            NSLog(
-              "[Operator] action type=\(actionType) completed in \(String(format: "%.1f", ms))ms")
-
             let screenshotData = try await cdp.screenshot()
             let b64 = screenshotData.base64EncodedString()
             let currentUrl = try? await cdp.currentURL()
@@ -323,7 +317,6 @@ final class OperatorService: ObservableObject {
         domain: "OperatorService", code: 2,
         userInfo: [NSLocalizedDescriptionKey: "Unsupported action: \(actionType)"])
     }
-    NSLog("[Operator] end action type=\(actionType)")
   }
 
   private func extractAssistantText(from output: [[String: Any]]) -> String? {

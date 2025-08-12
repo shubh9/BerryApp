@@ -5,27 +5,72 @@
 //  Created by Shubh Mittal on 2025-08-08.
 //
 
-import SwiftData
 import SwiftUI
 
+private struct NotificationItem: Identifiable, Decodable {
+  let id: Int
+  let ruleId: Int
+  let userId: String
+  let createdAt: Date?
+  let result: String
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case createdAt = "created_at"
+    case userId = "user_id"
+    case ruleId = "rule_id"
+    case payload
+  }
+
+  private struct Payload: Decodable { let result: String }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.id = try container.decode(Int.self, forKey: .id)
+    self.ruleId = try container.decode(Int.self, forKey: .ruleId)
+    self.userId = try container.decode(String.self, forKey: .userId)
+
+    // Parse ISO8601 with fractional seconds when possible; fall back to nil
+    if let createdString = try? container.decode(String.self, forKey: .createdAt) {
+      let fmt = ISO8601DateFormatter()
+      fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+      self.createdAt = fmt.date(from: createdString)
+    } else {
+      self.createdAt = nil
+    }
+
+    let payload = try container.decode(Payload.self, forKey: .payload)
+    self.result = payload.result
+  }
+}
+
 struct ContentView: View {
-  @Environment(\.modelContext) private var modelContext
-  @Query private var items: [Item]
   @StateObject private var chrome = ChromeController()
+  @State private var notifications: [NotificationItem] = []
+  @State private var pollTask: Task<Void, Never>? = nil
 
   var body: some View {
     NavigationSplitView {
       List {
-        ForEach(items) { item in
-          NavigationLink {
-            Text(
-              "Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))"
-            )
-          } label: {
-            Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
+        Section("Notifications") {
+          if notifications.isEmpty {
+            Text("No notifications")
+              .foregroundStyle(.secondary)
+          } else {
+            ForEach(notifications) { note in
+              VStack(alignment: .leading, spacing: 4) {
+                Text("Rule: \(note.ruleId)")
+                  .font(.subheadline)
+                  .fontWeight(.semibold)
+                Text(note.result)
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+              .padding(.vertical, 4)
+            }
           }
         }
-        .onDelete(perform: deleteItems)
+
         Section("Browser") {
           VStack(alignment: .leading, spacing: 8) {
             Text("Status: \(chrome.statusText)")
@@ -44,43 +89,95 @@ struct ContentView: View {
               .buttonStyle(.bordered)
               .disabled(!chrome.isRunning)
             }
+            Button("Create Rule") {
+              Task { await createRule() }
+            }
+            .buttonStyle(.bordered)
           }
           .padding(.vertical, 4)
         }
       }
       .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-      .toolbar {
-        ToolbarItem {
-          Button(action: addItem) {
-            Label("Add Item", systemImage: "plus")
-          }
-        }
-      }
       .task {
         await chrome.refreshRunningStatus()
+        await fetchNotifications()
+        startPolling()
       }
+      .onDisappear { stopPolling() }
     } detail: {
-      Text("Select an item")
+      Text("Select a notification")
     }
   }
 
-  private func addItem() {
-    withAnimation {
-      let newItem = Item(timestamp: Date())
-      modelContext.insert(newItem)
+  // MARK: - Networking
+  private func fetchNotifications() async {
+    let url = AppConfig.serverURL.appendingPathComponent("notifications")
+    var request = URLRequest(url: url)
+    request.httpMethod = "GET"
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+    do {
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        if let http = response as? HTTPURLResponse {
+          print("Fetch Notifications: server error \(http.statusCode)")
+        }
+        return
+      }
+
+      let decodedArray = try JSONDecoder().decode([NotificationItem].self, from: data)
+      await MainActor.run {
+        let existingIds = Set(self.notifications.map { $0.id })
+        let newItems = decodedArray.filter { !existingIds.contains($0.id) }
+        self.notifications.append(contentsOf: newItems)
+      }
+    } catch {
+      print("Fetch Notifications: request failed: \(error)")
     }
   }
 
-  private func deleteItems(offsets: IndexSet) {
-    withAnimation {
-      for index in offsets {
-        modelContext.delete(items[index])
+  private func createRule() async {
+    do {
+      var request = URLRequest(url: AppConfig.serverURL.appendingPathComponent("rule"))
+      request.httpMethod = "POST"
+      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+      let date = Date.now.formatted(date: .numeric, time: .standard)
+      let body: [String: String] = [
+        "userId": "Shubh",
+        "textPrompt": "check the weather in san francisco on \(date)",
+      ]
+      request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+
+      let (_, response) = try await URLSession.shared.data(for: request)
+      if let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
+        print("Create Rule: success \(http.statusCode)")
+      } else if let http = response as? HTTPURLResponse {
+        print("Create Rule: server error \(http.statusCode)")
+      }
+    } catch {
+      print("Create Rule: request failed: \(error)")
+    }
+  }
+
+  private func startPolling() {
+    guard pollTask == nil else { return }
+    print("Starting polling")
+
+    pollTask = Task {
+      while !Task.isCancelled {
+        try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
+        print("Polling for notifications")
+        await fetchNotifications()
       }
     }
+  }
+
+  private func stopPolling() {
+    pollTask?.cancel()
+    pollTask = nil
   }
 }
 
 #Preview {
   ContentView()
-    .modelContainer(for: Item.self, inMemory: true)
 }
