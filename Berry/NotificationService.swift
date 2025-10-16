@@ -3,7 +3,7 @@ import SwiftUI
 
 struct NotificationItem: Identifiable, Decodable {
   let id: Int
-  let ruleId: Int
+  let ruleId: String
   let userId: String
   let createdAt: Date?
   let result: String
@@ -21,7 +21,7 @@ struct NotificationItem: Identifiable, Decodable {
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.id = try container.decode(Int.self, forKey: .id)
-    self.ruleId = try container.decode(Int.self, forKey: .ruleId)
+    self.ruleId = try container.decode(String.self, forKey: .ruleId)
     self.userId = try container.decode(String.self, forKey: .userId)
 
     if let createdString = try? container.decode(String.self, forKey: .createdAt) {
