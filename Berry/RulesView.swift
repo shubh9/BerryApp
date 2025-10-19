@@ -23,7 +23,7 @@ struct RulesView: View {
         .textFieldStyle(.roundedBorder)
         .lineLimit(1...3)
 
-        Button(sendingRule ? "Sending…" : "Send") {
+        Button(sendingRule ? "Creating Rule…" : "Send") {
           Task {
             let text = ruleText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return }
