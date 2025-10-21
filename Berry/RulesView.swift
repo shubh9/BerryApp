@@ -70,7 +70,13 @@ struct RulesView: View {
         ScrollView {
           LazyVStack(alignment: .leading, spacing: 12) {
             ForEach(rulesVM.rules) { rule in
-              RuleCard(rule: rule)
+              RuleCard(rule: rule) {
+                do {
+                  try await rulesVM.deleteRule(ruleId: rule.id)
+                } catch {
+                  print("Failed to delete rule: \(error)")
+                }
+              }
             }
           }
           .padding(.vertical, 4)
@@ -87,23 +93,45 @@ struct RulesView: View {
 // MARK: - Rule Card Component
 struct RuleCard: View {
   let rule: RuleItem
+  let onDelete: () async -> Void
+  @State private var isDeleting = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Text(rule.prompt)
-        .font(.body)
-        .textSelection(.enabled)
-        .frame(maxWidth: .infinity, alignment: .leading)
+      HStack(alignment: .top) {
+        VStack(alignment: .leading, spacing: 8) {
+          Text(rule.prompt)
+            .font(.body)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-      // Display frequency if available
-      if let frequency = rule.frequency {
-        HStack {
-          Image(systemName: "clock.fill")
-            .font(.caption2)
-          Text(frequency)
-            .font(.caption)
-            .foregroundStyle(.secondary)
+          // Display frequency if available
+          if let frequency = rule.frequency {
+            HStack {
+              Image(systemName: "clock.fill")
+                .font(.caption2)
+              Text(frequency)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+          }
         }
+
+        // Delete button
+        Button(action: {
+          Task {
+            isDeleting = true
+            await onDelete()
+            isDeleting = false
+          }
+        }) {
+          Image(systemName: isDeleting ? "hourglass" : "trash")
+            .foregroundColor(.gray)
+            .font(.caption)
+        }
+        .buttonStyle(.plain)
+        .disabled(isDeleting)
+        .help("Delete rule")
       }
     }
     .padding(12)

@@ -55,9 +55,8 @@ final class NotificationService: ObservableObject {
       }
 
       let decodedArray = try JSONDecoder().decode([NotificationItem].self, from: data)
-      let existingIds = Set(self.notifications.map { $0.id })
-      let newItems = decodedArray.filter { !existingIds.contains($0.id) }
-      self.notifications.append(contentsOf: newItems)
+      // Replace entire notifications array with fresh data from backend
+      self.notifications = decodedArray
     } catch {
       print("Notifications fetch failed: \(error)")
     }

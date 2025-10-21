@@ -55,6 +55,9 @@ struct NotificationsView: View {
       }
     }
     .padding(16)
+    .onAppear {
+      Task { await notificationsVM.fetchOnce() }
+    }
   }
 }
 
