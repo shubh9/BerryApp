@@ -70,13 +70,22 @@ struct RulesView: View {
         ScrollView {
           LazyVStack(alignment: .leading, spacing: 12) {
             ForEach(rulesVM.rules) { rule in
-              RuleCard(rule: rule) {
-                do {
-                  try await rulesVM.deleteRule(ruleId: rule.id)
-                } catch {
-                  print("Failed to delete rule: \(error)")
-                }
-              }
+              RuleCard(
+                rule: rule,
+                onExecute: {
+                  do {
+                    try await rulesVM.executeRule(ruleId: rule.id)
+                  } catch {
+                    print("Failed to execute rule: \(error)")
+                  }
+                },
+                onDelete: {
+                  do {
+                    try await rulesVM.deleteRule(ruleId: rule.id)
+                  } catch {
+                    print("Failed to delete rule: \(error)")
+                  }
+                })
             }
           }
           .padding(.vertical, 4)
@@ -93,8 +102,10 @@ struct RulesView: View {
 // MARK: - Rule Card Component
 struct RuleCard: View {
   let rule: RuleItem
+  let onExecute: () async -> Void
   let onDelete: () async -> Void
   @State private var isDeleting = false
+  @State private var isExecuting = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -117,7 +128,29 @@ struct RuleCard: View {
           }
         }
 
-        // Delete button
+        // Execute button - Now with purple gradient and bigger size
+        Button(action: {
+          Task {
+            isExecuting = true
+            await onExecute()
+            isExecuting = false
+          }
+        }) {
+          Image(systemName: isExecuting ? "hourglass" : "play.circle")
+            .font(.title2)  // Bigger size
+            .foregroundStyle(
+              LinearGradient(
+                colors: [Color.purple, Color.pink.opacity(0.7)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+              )
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isExecuting)
+        .help("Execute rule now")
+
+        // Delete button - Now bigger
         Button(action: {
           Task {
             isDeleting = true
@@ -127,7 +160,7 @@ struct RuleCard: View {
         }) {
           Image(systemName: isDeleting ? "hourglass" : "trash")
             .foregroundColor(.gray)
-            .font(.caption)
+            .font(.title3)  // Bigger size
         }
         .buttonStyle(.plain)
         .disabled(isDeleting)

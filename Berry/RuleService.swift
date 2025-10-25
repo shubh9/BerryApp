@@ -108,4 +108,24 @@ final class RuleService: ObservableObject {
     // Refresh the rules list after successful deletion
     await fetchRules()
   }
+
+  func executeRule(ruleId: String) async throws {
+    print("▶️ Executing rule: \(ruleId)")
+    let url = AppConfig.serverURL
+      .appendingPathComponent("rule")
+      .appendingPathComponent(ruleId)
+      .appendingPathComponent("execute")
+
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+    let (_, response) = try await URLSession.shared.data(for: request)
+    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+      print("❌ Execute rule failed: HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)")
+      throw URLError(.badServerResponse)
+    }
+
+    print("✅ Rule executed successfully")
+  }
 }
