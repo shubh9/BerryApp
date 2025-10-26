@@ -40,7 +40,48 @@ struct NotificationItem: Identifiable, Decodable {
 @MainActor
 final class NotificationService: ObservableObject {
   @Published private(set) var notifications: [NotificationItem] = []
+  @AppStorage("viewedNotificationIds") private var viewedIdsData: Data = Data()
+
   private var pollTask: Task<Void, Never>? = nil
+
+  private var viewedIds: Set<Int> {
+    get {
+      guard !viewedIdsData.isEmpty else { return Set() }
+      return (try? JSONDecoder().decode(Set<Int>.self, from: viewedIdsData)) ?? Set()
+    }
+    set {
+      viewedIdsData = (try? JSONEncoder().encode(newValue)) ?? Data()
+    }
+  }
+
+  /// Check if a specific notification has been viewed
+  func isNotificationViewed(_ id: Int) -> Bool {
+    return viewedIds.contains(id)
+  }
+
+  /// Mark all recent notifications (last 24h) as viewed
+  func markAllRecentAsViewed() {
+    let recentNotifications = getRecentNotifications()
+    let recentIds = recentNotifications.map { $0.id }
+    viewedIds.formUnion(recentIds)
+    objectWillChange.send()
+  }
+
+  /// Get notifications from the last 24 hours
+  func getRecentNotifications() -> [NotificationItem] {
+    let cutoff = Date().addingTimeInterval(-24 * 60 * 60)
+    return notifications.filter { notification in
+      guard let createdAt = notification.createdAt else { return false }
+      return createdAt >= cutoff
+    }
+  }
+
+  /// Check if there are any unviewed notifications in the last 24 hours
+  func hasUnviewedRecentNotifications() -> Bool {
+    return getRecentNotifications().contains { !isNotificationViewed($0.id) }
+  }
+
+  // MARK: - Fetching & Polling
 
   func fetchOnce() async {
     let url = AppConfig.serverURL.appendingPathComponent("notifications")

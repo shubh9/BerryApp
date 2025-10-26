@@ -21,13 +21,16 @@ struct ContentView: View {
     case browser = "Browser"
   }
 
-  // Check if there's a notification in the last 24 hours
-  private var hasRecentNotification: Bool {
-    let twentyFourHoursAgo = Date().addingTimeInterval(-24 * 60 * 60)
-    return notificationsVM.notifications.contains { notification in
-      guard let createdAt = notification.createdAt else { return false }
-      return createdAt > twentyFourHoursAgo
-    }
+  // Check if there are any unviewed notifications in the last 24 hours
+  private var hasUnviewedNotification: Bool {
+    return notificationsVM.hasUnviewedRecentNotifications()
+  }
+
+  // Count of unviewed notifications in the last 24 hours
+  private var unviewedNotificationCount: Int {
+    return notificationsVM.getRecentNotifications().filter {
+      !notificationsVM.isNotificationViewed($0.id)
+    }.count
   }
 
   var body: some View {
@@ -68,7 +71,7 @@ struct ContentView: View {
       .foregroundStyle(
         LinearGradient(
           gradient: Gradient(
-            colors: hasRecentNotification
+            colors: hasUnviewedNotification
               ? [Color.white.opacity(0.6), Color.white.opacity(0.8)]
               : [Color.white.opacity(0.2), Color.white.opacity(0.4)]),
           startPoint: .topLeading,
@@ -79,7 +82,7 @@ struct ContentView: View {
       .background(
         LinearGradient(
           gradient: Gradient(
-            colors: hasRecentNotification
+            colors: hasUnviewedNotification
               ? [Color.accentColor.opacity(0), Color.accentColor.opacity(1)]
               : [Color.gray.opacity(0), Color.gray.opacity(0.2)]),
           startPoint: .topLeading,
@@ -125,11 +128,26 @@ struct ContentView: View {
       HStack(spacing: 0) {
         ForEach(Tab.allCases, id: \.self) { tab in
           Button(action: { selectedTab = tab }) {
-            Text(tab.rawValue)
-              .font(.headline)
-              .foregroundColor(selectedTab == tab ? .primary : .secondary)
-              .frame(maxWidth: .infinity)
-              .padding(.vertical, 12)
+            HStack(spacing: 6) {
+              Text(tab.rawValue)
+                .font(.headline)
+                .foregroundColor(selectedTab == tab ? .primary : .secondary)
+
+              // Notification badge for unviewed notifications
+              if tab == .notifications && unviewedNotificationCount > 0 {
+                ZStack {
+                  Circle()
+                    .fill(Color.accentColor)
+                    .frame(width: 12, height: 12)
+
+                  Text("\(unviewedNotificationCount)")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(.white)
+                }
+              }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
           }
           .buttonStyle(.plain)
         }
@@ -147,6 +165,12 @@ struct ContentView: View {
           NotificationsView(notificationsVM: notificationsVM)
         case .browser:
           BrowserView(chrome: chrome)
+        }
+      }
+      .onChange(of: selectedTab) { oldValue, newValue in
+        // Mark all recent notifications as viewed when user LEAVES the notifications tab
+        if oldValue == .notifications && newValue != .notifications {
+          notificationsVM.markAllRecentAsViewed()
         }
       }
     }
@@ -172,6 +196,11 @@ struct ContentView: View {
   }
 
   private func collapseWindow() {
+    // Mark notifications as viewed if user was on notifications tab
+    if selectedTab == .notifications {
+      notificationsVM.markAllRecentAsViewed()
+    }
+
     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
       isExpanded = false
     }

@@ -65,7 +65,7 @@ final class RuleService: ObservableObject {
     print("🔄 Fetching rules...")
     let url = AppConfig.serverURL
       .appendingPathComponent("rule")
-      .appending(queryItems: [URLQueryItem(name: "userId", value: "Shubh")])
+    // .appending(queryItems: [URLQueryItem(name: "userId", value: "Shubh")])
 
     var request = URLRequest(url: url)
     request.httpMethod = "GET"

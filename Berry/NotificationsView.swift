@@ -48,7 +48,10 @@ struct NotificationsView: View {
         ScrollView {
           LazyVStack(alignment: .leading, spacing: 12) {
             ForEach(recentNotifications) { note in
-              NotificationCard(note: note)
+              NotificationCard(
+                note: note,
+                isViewed: notificationsVM.isNotificationViewed(note.id)
+              )
             }
           }
           .padding(.vertical, 4)
@@ -65,6 +68,7 @@ struct NotificationsView: View {
 // MARK: - Notification Card Component
 struct NotificationCard: View {
   let note: NotificationItem
+  let isViewed: Bool
 
   private var timestamp: String {
     if let d = note.createdAt {
@@ -81,6 +85,24 @@ struct NotificationCard: View {
       HStack {
         Text("Rule \(note.ruleId)")
           .font(.subheadline).fontWeight(.semibold)
+
+        // NEW indicator for unviewed notifications
+        if !isViewed {
+          HStack(spacing: 4) {
+            Image(systemName: "star.fill")
+              .font(.caption2)
+              .foregroundColor(.accentColor)
+            Text("NEW")
+              .font(.caption2)
+              .fontWeight(.bold)
+              .foregroundColor(.accentColor)
+          }
+          .padding(.horizontal, 6)
+          .padding(.vertical, 3)
+          .background(Color.accentColor.opacity(0.15))
+          .cornerRadius(4)
+        }
+
         Spacer()
         Text(timestamp)
           .font(.caption).foregroundStyle(.secondary)
@@ -101,7 +123,10 @@ struct NotificationCard: View {
     )
     .overlay(
       RoundedRectangle(cornerRadius: 10)
-        .stroke(Color.gray.opacity(0.2))
+        .stroke(
+          isViewed ? Color.gray.opacity(0.15) : Color.accentColor.opacity(0.3),
+          lineWidth: isViewed ? 1 : 1.5
+        )
     )
   }
 }
