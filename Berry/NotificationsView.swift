@@ -5,6 +5,7 @@
 //  Created by Shubh Mittal on 2025-10-13.
 //
 
+import MarkdownUI
 import SwiftUI
 
 struct NotificationsView: View {
@@ -85,8 +86,11 @@ struct NotificationCard: View {
           .font(.caption).foregroundStyle(.secondary)
       }
 
-      Text(note.result)
-        .font(.system(.body, design: .monospaced))
+      Markdown(note.result)
+        .markdownTextStyle(\.text) {
+          FontSize(14)
+        }
+        .markdownTheme(.gitHub)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
     }

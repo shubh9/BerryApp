@@ -27,6 +27,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   static weak var shared: AppDelegate?
   var window: NSWindow?
 
+  private var lastExpandedSize: NSSize?
+
   func applicationDidFinishLaunching(_ notification: Notification) {
     AppDelegate.shared = self
 
@@ -56,6 +58,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func positionWindowCollapsed(_ window: NSWindow) {
+    if window.frame.width > 100 {
+      lastExpandedSize = window.frame.size
+    }
+
     if let screen = NSScreen.main {
       let screenFrame = screen.visibleFrame
       let collapsedWidth: CGFloat = 30
@@ -74,8 +80,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   func positionWindowExpanded(_ window: NSWindow) {
     if let screen = NSScreen.main {
       let screenFrame = screen.visibleFrame
-      let expandedWidth: CGFloat = 450
-      let expandedHeight: CGFloat = 650
+
+      let expandedWidth: CGFloat = lastExpandedSize?.width ?? 450
+      let expandedHeight: CGFloat = lastExpandedSize?.height ?? 650
+
       let xPosition = screenFrame.maxX - expandedWidth
       let yPosition = screenFrame.maxY - (screenFrame.height / 5) - expandedHeight
 
