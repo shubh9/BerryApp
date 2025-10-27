@@ -6,12 +6,14 @@
 //
 
 import AppKit
+import Combine
 
-class WindowManager {
+class WindowManager: ObservableObject {
   static let shared = WindowManager()
   private init() {}
 
   private var lastExpandedSize: NSSize?
+  @Published var isExpanded: Bool = false
 
   func configureLoginWindow(_ window: NSWindow) {
     // Normal window for login screen
@@ -40,9 +42,11 @@ class WindowManager {
 
   func positionWindowCollapsed(_ window: NSWindow) {
     print("Positioning window collapsed")
-    if window.frame.width > 100 {
-      print("Window is expanded")
+    // Capture size if we're actually collapsing from expanded state
+    if isExpanded {
+      print("Capturing expanded size")
       lastExpandedSize = window.frame.size
+      isExpanded = false
     }
 
     if let screen = NSScreen.main {
@@ -66,6 +70,8 @@ class WindowManager {
 
   func positionWindowExpanded(_ window: NSWindow) {
     print("Positioning window expanded")
+    isExpanded = true
+
     if let screen = NSScreen.main {
       let screenFrame = screen.visibleFrame
 

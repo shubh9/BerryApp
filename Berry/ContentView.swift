@@ -13,8 +13,8 @@ struct ContentView: View {
   @StateObject private var chrome = ChromeController()
   @StateObject private var notificationsVM: NotificationService
   @StateObject private var rulesVM: RuleService
+  @ObservedObject private var windowManager = WindowManager.shared
   @State private var selectedTab: Tab = .rules
-  @State private var isExpanded: Bool = false
 
   init(authService: AuthService) {
     self.authService = authService
@@ -42,7 +42,7 @@ struct ContentView: View {
 
   var body: some View {
     ZStack {
-      if isExpanded {
+      if windowManager.isExpanded {
         // Expanded view - Full UI
         expandedView
           .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -208,13 +208,9 @@ struct ContentView: View {
 
   // MARK: - Window Management
   private func expandWindow() {
-    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-      isExpanded = true
-    }
-
-    // Position window to expanded state
-    DispatchQueue.main.asyncAfter(deadline: .now()) {
-      if let window = NSApplication.shared.windows.first {
+    // Position window to expanded state (WindowManager will update isExpanded)
+    if let window = NSApplication.shared.windows.first {
+      withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
         WindowManager.shared.positionWindowExpanded(window)
       }
     }
@@ -226,13 +222,9 @@ struct ContentView: View {
       notificationsVM.markAllRecentAsViewed()
     }
 
-    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-      isExpanded = false
-    }
-
-    // Position window to collapsed state
-    DispatchQueue.main.asyncAfter(deadline: .now()) {
-      if let window = NSApplication.shared.windows.first {
+    // Position window to collapsed state (WindowManager will update isExpanded)
+    if let window = NSApplication.shared.windows.first {
+      withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
         WindowManager.shared.positionWindowCollapsed(window)
       }
     }
