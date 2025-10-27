@@ -27,9 +27,13 @@ struct RulesView: View {
           Task {
             let text = ruleText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return }
+            guard let userId = rulesVM.authService.currentUserId else {
+              print("❌ No authenticated user")
+              return
+            }
             sendingRule = true
             do {
-              try await RuleItem.sendRule(userId: "Shubh", textPrompt: text)
+              try await RuleItem.sendRule(userId: userId, textPrompt: text)
               ruleText = ""
               await rulesVM.fetchRules()  // Refresh rules after adding
             } catch {
@@ -180,5 +184,5 @@ struct RuleCard: View {
 }
 
 #Preview {
-  RulesView(rulesVM: RuleService())
+  RulesView(rulesVM: RuleService(authService: AuthService()))
 }

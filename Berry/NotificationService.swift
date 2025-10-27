@@ -42,7 +42,12 @@ final class NotificationService: ObservableObject {
   @Published private(set) var notifications: [NotificationItem] = []
   @AppStorage("viewedNotificationIds") private var viewedIdsData: Data = Data()
 
+  let authService: AuthService
   private var pollTask: Task<Void, Never>? = nil
+
+  init(authService: AuthService) {
+    self.authService = authService
+  }
 
   private var viewedIds: Set<Int> {
     get {
@@ -84,7 +89,18 @@ final class NotificationService: ObservableObject {
   // MARK: - Fetching & Polling
 
   func fetchOnce() async {
-    let url = AppConfig.serverURL.appendingPathComponent("notifications")
+    guard let userId = authService.currentUserId else {
+      print("❌ No authenticated user")
+      return
+    }
+
+    print("🔄 Fetching notifications for user: \(userId)")
+    let url = AppConfig.serverURL
+      .appendingPathComponent("notifications")
+      .appending(queryItems: [
+        URLQueryItem(name: "userId", value: userId)
+      ])
+
     var request = URLRequest(url: url)
     request.httpMethod = "GET"
     request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -92,14 +108,16 @@ final class NotificationService: ObservableObject {
     do {
       let (data, response) = try await URLSession.shared.data(for: request)
       guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        print(
+          "❌ Fetch notifications failed: HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)")
         return
       }
 
       let decodedArray = try JSONDecoder().decode([NotificationItem].self, from: data)
-      // Replace entire notifications array with fresh data from backend
+      print("✅ Fetched \(decodedArray.count) notifications")
       self.notifications = decodedArray
     } catch {
-      print("Notifications fetch failed: \(error)")
+      print("❌ Notifications fetch failed: \(error)")
     }
   }
 

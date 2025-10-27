@@ -9,11 +9,18 @@ import AppKit
 import SwiftUI
 
 struct ContentView: View {
+  @ObservedObject var authService: AuthService
   @StateObject private var chrome = ChromeController()
-  @StateObject private var notificationsVM = NotificationService()
-  @StateObject private var rulesVM = RuleService()
+  @StateObject private var notificationsVM: NotificationService
+  @StateObject private var rulesVM: RuleService
   @State private var selectedTab: Tab = .rules
   @State private var isExpanded: Bool = false
+
+  init(authService: AuthService) {
+    self.authService = authService
+    _rulesVM = StateObject(wrappedValue: RuleService(authService: authService))
+    _notificationsVM = StateObject(wrappedValue: NotificationService(authService: authService))
+  }
 
   enum Tab: String, CaseIterable {
     case rules = "Rules"
@@ -98,13 +105,33 @@ struct ContentView: View {
   // MARK: - Expanded View
   private var expandedView: some View {
     VStack(spacing: 0) {
-      // Header with close button
-      HStack {
+      // Header with user info, logout, and close button
+      HStack(alignment: .lastTextBaseline) {
         Text("Berry")
           .font(.title2)
           .fontWeight(.bold)
 
+        if let userName = authService.currentUser?.name {
+          Text(userName)
+            .font(.caption)
+            .foregroundColor(.secondary)
+        }
+
         Spacer()
+
+        Button("Logout") {
+          authService.logout()
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(.secondary)
+        .font(.caption)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .overlay(
+          RoundedRectangle(cornerRadius: 6)
+            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+        )
+        .padding(.trailing, 8)
 
         Button(action: {
           collapseWindow()
@@ -188,9 +215,7 @@ struct ContentView: View {
     // Position window to expanded state
     DispatchQueue.main.asyncAfter(deadline: .now()) {
       if let window = NSApplication.shared.windows.first {
-        if let appDelegate = AppDelegate.shared {
-          appDelegate.positionWindowExpanded(window)
-        }
+        WindowManager.shared.positionWindowExpanded(window)
       }
     }
   }
@@ -207,15 +232,13 @@ struct ContentView: View {
 
     // Position window to collapsed state
     DispatchQueue.main.asyncAfter(deadline: .now()) {
-      if let window = NSApplication.shared.windows.first,
-        let appDelegate = AppDelegate.shared
-      {
-        appDelegate.positionWindowCollapsed(window)
+      if let window = NSApplication.shared.windows.first {
+        WindowManager.shared.positionWindowCollapsed(window)
       }
     }
   }
 }
 
 #Preview {
-  ContentView()
+  ContentView(authService: AuthService())
 }

@@ -132,5 +132,5 @@ struct NotificationCard: View {
 }
 
 #Preview {
-  NotificationsView(notificationsVM: NotificationService())
+  NotificationsView(notificationsVM: NotificationService(authService: AuthService()))
 }

@@ -60,12 +60,24 @@ struct RuleItem: Identifiable, Decodable {
 @MainActor
 final class RuleService: ObservableObject {
   @Published private(set) var rules: [RuleItem] = []
+  let authService: AuthService
+
+  init(authService: AuthService) {
+    self.authService = authService
+  }
 
   func fetchRules() async {
-    print("🔄 Fetching rules...")
+    guard let userId = authService.currentUserId else {
+      print("❌ No authenticated user")
+      return
+    }
+
+    print("🔄 Fetching rules for user: \(userId)")
     let url = AppConfig.serverURL
       .appendingPathComponent("rule")
-    // .appending(queryItems: [URLQueryItem(name: "userId", value: "Shubh")])
+      .appending(queryItems: [
+        URLQueryItem(name: "userId", value: userId)
+      ])
 
     var request = URLRequest(url: url)
     request.httpMethod = "GET"
