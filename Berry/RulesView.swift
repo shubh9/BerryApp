@@ -15,13 +15,25 @@ struct RulesView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
       // Rule input
-      HStack(spacing: 8) {
+      HStack(alignment: .top, spacing: 8) {
         TextField(
           "Enter a routine...", text: $ruleText,
           axis: .vertical
         )
-        .textFieldStyle(.roundedBorder)
-        .lineLimit(1...3)
+        .textFieldStyle(.plain)
+        .padding(6)
+        .background(
+          ZStack {
+            Color(NSColor.windowBackgroundColor)
+            Color.white.opacity(0.05)
+          }
+        ).cornerRadius(5)
+        .overlay(
+          RoundedRectangle(cornerRadius: 5)
+            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+        )
+        .fixedSize(horizontal: false, vertical: true)
+        .lineLimit(1...5)
 
         Button(sendingRule ? "Creating Rule…" : "Send") {
           Task {
