@@ -10,5 +10,5 @@ import Foundation
 enum AppConfig {
   // Base server URL used by network requests throughout the app.
   // Update this value to point to the desired backend environment.
-  static let serverURL: URL = URL(string: "http://localhost:3000")!
+  static let serverURL: URL = URL(string: "https://berry-server.vercel.app/")!
 }

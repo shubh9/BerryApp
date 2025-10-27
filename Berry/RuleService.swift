@@ -93,7 +93,6 @@ final class RuleService: ObservableObject {
       let decodedArray = try JSONDecoder().decode([RuleItem].self, from: data)
       print("✅ Fetched \(decodedArray.count) rules")
       self.rules = decodedArray
-      print("📋 Rules updated in view model")
     } catch {
       print("❌ Rules fetch failed: \(error)")
     }
